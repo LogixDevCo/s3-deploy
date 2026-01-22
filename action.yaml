@@ -1,0 +1,240 @@
+name: 'LogixDev S3 Static Site Deploy'
+description: 'Deploy static websites to AWS S3 with CloudFront invalidation and deployment tracking'
+author: 'TahaDekmak'
+branding:
+  icon: 'upload-cloud'
+  color: 'green'
+
+inputs:
+  deploy-type:
+    description: 'Deployment type (from-branch, from-pr, from-tag)'
+    required: true
+  environment:
+    description: 'Target environment'
+    required: true
+  node-version:
+    description: 'Node.js version'
+    required: true
+  target-url:
+    description: 'Target URL'
+    required: true
+  deployment-prefix:
+    description: 'Deployment prefix identifier'
+    required: true
+  branch:
+    description: 'Branch to deploy'
+    required: false
+    default: ''
+  pull-request-nb:
+    description: 'PR number'
+    required: false
+    default: ''
+  commit-tag:
+    description: 'Tag to deploy'
+    required: false
+    default: ''
+  custom-build-folder:
+    description: 'Build output folder'
+    required: false
+    default: 'out'
+  run-ci:
+    description: 'Run npm ci (true) or npm install (false)'
+    required: false
+    default: 'true'
+  approvers:
+    description: 'Comma-separated approvers'
+    required: false
+    default: ''
+  cloudflare-zone-id:
+    description: 'Cloudflare zone ID'
+    required: false
+    default: ''
+  cloudflare-token:
+    description: 'Cloudflare API token'
+    required: false
+    default: ''
+  sentry-project:
+    description: 'Sentry project'
+    required: false
+    default: ''
+  sentry-org:
+    description: 'Sentry organization'
+    required: false
+    default: ''
+  sentry-environment:
+    description: 'Sentry environment'
+    required: false
+    default: ''
+  sentry-token:
+    description: 'Sentry auth token'
+    required: false
+    default: ''
+  slack-webhook:
+    description: 'Slack webhook URL'
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set deployment ref
+      shell: bash
+      run: |
+        if [ "${{ inputs.deploy-type }}" = "from-branch" ]; then
+          echo "ref=${{ inputs.branch }}" >> $GITHUB_ENV
+        elif [ "${{ inputs.deploy-type }}" = "from-tag" ]; then
+          echo "ref=${{ inputs.commit-tag }}" >> $GITHUB_ENV
+        elif [ "${{ inputs.deploy-type }}" = "from-pr" ]; then
+          echo "ref=refs/pull/${{ inputs.pull-request-nb }}/merge" >> $GITHUB_ENV
+        fi
+
+    - name: Get PR details (if from-pr)
+      if: inputs.deploy-type == 'from-pr'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        which hub || sudo apt install -y hub
+        basebranch=$(hub pr show -f %B "${{ inputs.pull-request-nb }}")
+        echo "base_branch=$basebranch" >> $GITHUB_ENV
+      
+    - name: Merge PR (if from-pr)
+      if: inputs.deploy-type == 'from-pr'
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: |
+        git fetch
+        git checkout ${{ env.base_branch }}
+        git config --global user.name "${{ github.actor }}"
+        git config --global user.email "${{ github.actor }}@users.noreply.github.com"
+        hub merge https://github.com/${{ github.repository }}/pull/${{ inputs.pull-request-nb }}
+
+    - name: Manual approval (if production)
+      if: contains(inputs.environment, 'production') && inputs.approvers != ''
+      uses: trstringer/manual-approval@9f5e5d6bc511762e17f849775a3c56bdea6b4493
+      timeout-minutes: 5
+      with:
+        secret: ${{ github.token }}
+        approvers: ${{ inputs.approvers }}
+        minimum-approvals: 1
+        issue-title: "Deploying to ${{ inputs.environment }}"
+        issue-body: "Please approve or deny the deployment"
+        exclude-workflow-initiator-as-approver: false
+
+    - name: Setup Node.js
+      uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6
+      with:
+        node-version: ${{ inputs.node-version }}
+        cache: 'npm'
+        cache-dependency-path: 'package-lock.json'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        if [ "${{ inputs.run-ci }}" = "true" ]; then
+          npm ci
+        else
+          rm package-lock.json
+          npm install
+        fi
+
+    - name: Start deployment
+      uses: bobheadxi/deployments@648679e8e4915b27893bd7dbc35cb504dc915bc8
+      id: deployment
+      with:
+        step: start
+        token: ${{ github.token }}
+        env: ${{ inputs.deployment-prefix }}-${{ inputs.environment }}
+        ref: ${{ env.ref }}
+        env_url: ${{ inputs.target-url }}
+        override: true
+
+    - name: Build application
+      shell: bash
+      env:
+        BUILD_ENV: ${{ inputs.environment }}
+      run: |
+        [ -d ${{ inputs.custom-build-folder }}/ ] && rm -rf ${{ inputs.custom-build-folder }}/
+        npm run "build:${BUILD_ENV}"
+        cat "deploy.${BUILD_ENV}.config" >> $GITHUB_ENV
+
+    - name: Sync to S3
+      shell: bash
+      env:
+        FULL_DOMAIN_NAME: ${{ env.full_domain_name }}
+      run: |
+        aws s3 sync --acl public-read --sse --delete ${{ inputs.custom-build-folder }}/ s3://"$FULL_DOMAIN_NAME"/ --exclude ".*" --exclude "README.md"
+
+    - name: Invalidate CloudFront
+      shell: bash
+      env:
+        BUCKET: ${{ env.bucket }}
+      run: |
+        distribution_id=$(aws cloudfront list-distributions --query "DistributionList.Items[].{Id:Id , OriginDomainName: Origins.Items[0].DomainName}[?contains(OriginDomainName, '$BUCKET')] | [0] | Id" | tr -d '"')
+        echo "Distribution ID: $distribution_id"
+        aws cloudfront create-invalidation --distribution-id $distribution_id --paths '/*'
+
+    - name: Purge Cloudflare cache
+      if: inputs.cloudflare-zone-id != '' && inputs.cloudflare-token != ''
+      shell: bash
+      run: |
+        curl https://api.cloudflare.com/client/v4/zones/${{ inputs.cloudflare-zone-id }}/purge_cache \
+          -H 'Content-Type: application/json' \
+          -H "Authorization: Bearer ${{ inputs.cloudflare-token }}" \
+          -d '{"files": ["${{ inputs.target-url }}/index.html"]}'
+
+    - name: Update deployment status
+      uses: bobheadxi/deployments@648679e8e4915b27893bd7dbc35cb504dc915bc8
+      if: always()
+      with:
+        step: finish
+        token: ${{ github.token }}
+        status: ${{ job.status }}
+        env: ${{ inputs.deployment-prefix }}-${{ inputs.environment }}
+        ref: ${{ env.ref }}
+        deployment_id: ${{ steps.deployment.outputs.deployment_id }}
+        env_url: ${{ inputs.target-url }}
+        override: true
+
+    - name: Create Sentry release
+      if: inputs.sentry-project != '' && inputs.sentry-token != ''
+      uses: getsentry/action-release@dab6548b3c03c4717878099e43782cf5be654289
+      env:
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry-token }}
+        SENTRY_ORG: ${{ inputs.sentry-org }}
+        SENTRY_PROJECT: ${{ inputs.sentry-project }}
+      with:
+        environment: ${{ inputs.sentry-environment }}
+        version: ${{ github.sha }}
+        sourcemaps: './dist'
+        ignore_missing: true
+
+    - name: Fetch tag notes (if from-tag)
+      if: inputs.deploy-type == 'from-tag' && contains(inputs.environment, 'production')
+      id: tag_notes
+      shell: bash
+      run: |
+        TAG_MESSAGE=$(git tag -l --format='%(contents)' ${{ env.ref }})
+        echo "TAG_MESSAGE<<EOF" >> $GITHUB_ENV
+        echo "$TAG_MESSAGE" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+      
+    - name: Create GitHub release (if from-tag)
+      if: inputs.deploy-type == 'from-tag' && contains(inputs.environment, 'production')
+      uses: ncipollo/release-action@440c8c1cb0ed28b9f43e4d1d670870f059653174
+      with:
+        allowUpdates: 'true'
+        makeLatest: 'true'
+        tag: ${{ env.ref }}
+        body: ${{ env.TAG_MESSAGE }}
+
+    - name: Slack notification
+      if: inputs.slack-webhook != ''
+      uses: rtCamp/action-slack-notify@e31e87e03dd19038e411e38ae27cbad084a90661
+      env:
+        SLACK_WEBHOOK: ${{ inputs.slack-webhook }}
+        SLACK_USERNAME: runner-deploy
+        SLACK_ICON_EMOJI: ':rocket:'
+        SLACK_TITLE: 'Deployment to ${{ inputs.environment }}'
+        SLACK_MESSAGE: '• *Repository*: ${{ github.repository }} • *Deployed By*: ${{ github.actor }} • *Ref*: ${{ env.ref }}'
