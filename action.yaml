@@ -113,7 +113,6 @@ runs:
     - name: Manual approval (if production)
       if: contains(inputs.environment, 'production') && inputs.approvers != ''
       uses: trstringer/manual-approval@9f5e5d6bc511762e17f849775a3c56bdea6b4493
-      timeout-minutes: 5
       with:
         secret: ${{ github.token }}
         approvers: ${{ inputs.approvers }}
