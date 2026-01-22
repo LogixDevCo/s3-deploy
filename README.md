@@ -35,7 +35,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
-      contents: write
+      contents: read
       deployments: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
@@ -46,7 +46,7 @@ jobs:
           aws-region: us-east-1
       
       - name: Deploy to S3
-        uses: LogixDevCo/s3-deploy-action@v1.0.0
+        uses: tahadekmak/s3-deploy-action@v1
         with:
           deploy-type: 'from-branch'
           branch: 'main'
@@ -87,7 +87,7 @@ jobs:
           aws-region: us-east-1
       
       - name: Deploy to S3
-        uses: LogixDevCo/s3-deploy-action@v1.0.0
+        uses: tahadekmak/s3-deploy-action@v1
         with:
           deploy-type: 'from-pr'
           pull-request-nb: ${{ github.event.inputs.pull-request-nb }}
@@ -111,7 +111,7 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       id-token: write
-      contents: write
+      contents: read
       deployments: write
       issues: write
     steps:
@@ -123,7 +123,7 @@ jobs:
           aws-region: us-east-1
       
       - name: Deploy to S3
-        uses: LogixDevCo/s3-deploy-action@v1.0.0
+        uses: tahadekmak/s3-deploy-action@v1
         with:
           deploy-type: 'from-tag'
           commit-tag: ${{ github.ref_name }}
