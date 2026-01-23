@@ -46,7 +46,6 @@ jobs:
           environment: 'staging'
           node-version: '20'
           target-url: 'https://staging.example.com'
-          full-domain-name: 'staging.example.com'
           bucket: 'staging-bucket'
           deployment-prefix: 'app'
 ```
@@ -87,7 +86,6 @@ jobs:
           environment: 'staging'
           node-version: '20'
           target-url: 'https://staging.example.com'
-          full-domain-name: 'staging.example.com'
           bucket: 'staging-bucket'
           deployment-prefix: 'app'
 ```
@@ -134,7 +132,6 @@ jobs:
       contents: read
     outputs:
       target_url: ${{ steps.config.outputs.TARGET_URL }}
-      full_domain_name: ${{ steps.config.outputs.FULL_DOMAIN_NAME }}
       bucket: ${{ steps.config.outputs.BUCKET }}
     steps:
       - id: config
@@ -145,12 +142,10 @@ jobs:
             {
               "staging": {
                 "TARGET_URL": "https://staging.example.com",
-                "FULL_DOMAIN_NAME": "staging.example.com",
                 "BUCKET": "staging-bucket"
               },
               "production": {
                 "TARGET_URL": "https://example.com",
-                "FULL_DOMAIN_NAME": "example.com",
                 "BUCKET": "production-bucket"
               }
             }
@@ -181,7 +176,6 @@ jobs:
           environment: ${{ inputs.environment }}
           node-version: '20'
           target-url: ${{ needs.get-config.outputs.target_url }}
-          full-domain-name: ${{ needs.get-config.outputs.full_domain_name }}
           bucket: ${{ needs.get-config.outputs.bucket }}
           deployment-prefix: "app"
           branch: ${{ inputs.branch }}
@@ -198,7 +192,6 @@ jobs:
 | `node-version` | Node.js version | Yes | - |
 | `target-url` | Target URL | Yes | - |
 | `deployment-prefix` | Deployment prefix identifier | Yes | - |
-| `full-domain-name` | Full domain name for S3 bucket | Yes | - |
 | `bucket` | S3 bucket name | Yes | - |
 | `branch` | Branch to deploy (for from-branch) | No | - |
 | `pull-request-nb` | PR number (for from-pr) | No | - |

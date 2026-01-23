@@ -73,9 +73,6 @@ inputs:
     description: 'Slack webhook URL'
     required: false
     default: ''
-  full-domain-name:
-    description: 'Full domain name for S3 bucket'
-    required: true
   bucket:
     description: 'S3 bucket name'
     required: true
@@ -166,7 +163,7 @@ runs:
     - name: Sync to S3
       shell: bash
       run: |
-        aws s3 sync --acl public-read --sse --delete ${{ inputs.custom-build-folder }}/ s3://${{ inputs.full-domain-name }}/ --exclude ".*" --exclude "README.md"
+        aws s3 sync --acl public-read --sse --delete ${{ inputs.custom-build-folder }}/ s3://${{ inputs.bucket }}/ --exclude ".*" --exclude "README.md"
 
     - name: Invalidate CloudFront
       shell: bash
