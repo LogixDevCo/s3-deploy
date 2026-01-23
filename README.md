@@ -16,50 +16,45 @@ A GitHub Action that deploys static websites to AWS S3 with CloudFront invalidat
 
 ## Usage
 
-### Prerequisites
-
-**Required in your workflow:**
-1. Checkout your repository
-2. Configure AWS credentials
-
 ### Basic Deploy from Branch
 
 ```yaml
-name: Deploy to S3
+name: Deploy
 on:
   push:
     branches: [main]
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
       deployments: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@v4
       
-      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
       
-      - name: Deploy to S3
-        uses: tahadekmak/s3-deploy-action@v1
+      - uses: LogixDevCo/s3-deploy@main
         with:
           deploy-type: 'from-branch'
           branch: 'main'
           environment: 'staging'
           node-version: '20'
           target-url: 'https://staging.example.com'
-          deployment-prefix: 'frontend'
+          full-domain-name: 'staging.example.com'
+          bucket: 'staging-bucket'
+          deployment-prefix: 'app'
 ```
 
 ### Deploy from Pull Request
 
 ```yaml
-name: Deploy PR to S3
+name: Deploy PR
 on:
   workflow_dispatch:
     inputs:
@@ -69,73 +64,129 @@ on:
 
 jobs:
   deploy:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     permissions:
       id-token: write
       contents: read
-      pull-requests: read
+      pull-requests: write
       deployments: write
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@v4
         with:
-          ref: main
           fetch-depth: 0
       
-      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: us-east-1
       
-      - name: Deploy to S3
-        uses: tahadekmak/s3-deploy-action@v1
+      - uses: LogixDevCo/s3-deploy@main
         with:
           deploy-type: 'from-pr'
           pull-request-nb: ${{ github.event.inputs.pull-request-nb }}
           environment: 'staging'
           node-version: '20'
           target-url: 'https://staging.example.com'
-          deployment-prefix: 'frontend'
+          full-domain-name: 'staging.example.com'
+          bucket: 'staging-bucket'
+          deployment-prefix: 'app'
 ```
 
-### Production with Approval and Cloudflare
+### Multi-Environment with Variable Mapping
 
 ```yaml
-name: Deploy to Production
+name: Deploy to S3
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      deploy-type:
+        description: "Deployment Type"
+        required: true
+        type: choice
+        options: [from-pr, from-branch, from-tag]
+      branch:
+        description: "Branch to deploy"
+        required: false
+        type: choice
+        options: [main]
+      environment:
+        description: "Target Environment"
+        required: true
+        type: choice
+        options: [staging, production]
+      pull-request-nb:
+        description: "PR number"
+        required: false
+        type: string
+      commit-tag:
+        description: "Tag to deploy"
+        required: false
+        type: string
+
+env:
+  AWS_REGION: us-east-1
+  AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
 jobs:
-  deploy:
-    runs-on: ubuntu-24.04
+  get-config:
+    runs-on: ubuntu-latest
     permissions:
-      id-token: write
       contents: read
-      deployments: write
-      issues: write
+    outputs:
+      target_url: ${{ steps.config.outputs.TARGET_URL }}
+      full_domain_name: ${{ steps.config.outputs.FULL_DOMAIN_NAME }}
+      bucket: ${{ steps.config.outputs.BUCKET }}
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
-      
-      - uses: aws-actions/configure-aws-credentials@61815dcd50bd041e203e49132bacad1fd04d2708
+      - id: config
+        uses: kanga333/variable-mapper@master
         with:
-          role-to-assume: ${{ secrets.AWS_PROD_ROLE_ARN }}
-          aws-region: us-east-1
-      
-      - name: Deploy to S3
-        uses: tahadekmak/s3-deploy-action@v1
+          key: "${{ inputs.environment }}"
+          map: |
+            {
+              "staging": {
+                "TARGET_URL": "https://staging.example.com",
+                "FULL_DOMAIN_NAME": "staging.example.com",
+                "BUCKET": "staging-bucket"
+              },
+              "production": {
+                "TARGET_URL": "https://example.com",
+                "FULL_DOMAIN_NAME": "example.com",
+                "BUCKET": "production-bucket"
+              }
+            }
+          export_to: output
+
+  deploy:
+    needs: get-config
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      contents: read
+      pull-requests: write
+      deployments: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
         with:
-          deploy-type: 'from-tag'
-          commit-tag: ${{ github.ref_name }}
-          environment: 'production'
+          fetch-depth: 0
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - uses: LogixDevCo/s3-deploy@main
+        with:
+          deploy-type: ${{ inputs.deploy-type }}
+          environment: ${{ inputs.environment }}
           node-version: '20'
-          target-url: 'https://example.com'
-          deployment-prefix: 'frontend'
-          approvers: 'john-doe,jane-smith'
-          cloudflare-zone-id: ${{ secrets.CLOUDFLARE_ZONE_ID }}
-          cloudflare-token: ${{ secrets.CLOUDFLARE_PURGE_API_TOKEN }}
-          sentry-project: 'my-app'
-          slack-webhook: ${{ secrets.SLACK_WEBHOOK_URL }}
+          target-url: ${{ needs.get-config.outputs.target_url }}
+          full-domain-name: ${{ needs.get-config.outputs.full_domain_name }}
+          bucket: ${{ needs.get-config.outputs.bucket }}
+          deployment-prefix: "app"
+          branch: ${{ inputs.branch }}
+          pull-request-nb: ${{ inputs.pull-request-nb }}
+          commit-tag: ${{ inputs.commit-tag }}
 ```
 
 ## Inputs
@@ -147,6 +198,8 @@ jobs:
 | `node-version` | Node.js version | Yes | - |
 | `target-url` | Target URL | Yes | - |
 | `deployment-prefix` | Deployment prefix identifier | Yes | - |
+| `full-domain-name` | Full domain name for S3 bucket | Yes | - |
+| `bucket` | S3 bucket name | Yes | - |
 | `branch` | Branch to deploy (for from-branch) | No | - |
 | `pull-request-nb` | PR number (for from-pr) | No | - |
 | `commit-tag` | Tag to deploy (for from-tag) | No | - |
@@ -174,19 +227,7 @@ The action expects npm scripts for each environment:
 }
 ```
 
-And environment config files:
-
-```
-deploy.dev.config
-deploy.staging.config
-deploy.production.config
-```
-
-Each config file should contain:
-```bash
-full_domain_name=staging.example.com
-bucket=staging-example-com
-```
+Pass the `full-domain-name` and `bucket` as inputs to the action (typically from environment-specific configuration or variable mapping).
 
 ## Workflow Steps
 

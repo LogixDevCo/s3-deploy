@@ -73,6 +73,12 @@ inputs:
     description: 'Slack webhook URL'
     required: false
     default: ''
+  full-domain-name:
+    description: 'Full domain name for S3 bucket'
+    required: true
+  bucket:
+    description: 'S3 bucket name'
+    required: true
 
 runs:
   using: 'composite'
@@ -156,21 +162,16 @@ runs:
       run: |
         [ -d ${{ inputs.custom-build-folder }}/ ] && rm -rf ${{ inputs.custom-build-folder }}/
         npm run "build:${BUILD_ENV}"
-        cat "deploy.${BUILD_ENV}.config" >> $GITHUB_ENV
 
     - name: Sync to S3
       shell: bash
-      env:
-        FULL_DOMAIN_NAME: ${{ env.full_domain_name }}
       run: |
-        aws s3 sync --acl public-read --sse --delete ${{ inputs.custom-build-folder }}/ s3://"$FULL_DOMAIN_NAME"/ --exclude ".*" --exclude "README.md"
+        aws s3 sync --acl public-read --sse --delete ${{ inputs.custom-build-folder }}/ s3://${{ inputs.full-domain-name }}/ --exclude ".*" --exclude "README.md"
 
     - name: Invalidate CloudFront
       shell: bash
-      env:
-        BUCKET: ${{ env.bucket }}
       run: |
-        distribution_id=$(aws cloudfront list-distributions --query "DistributionList.Items[].{Id:Id , OriginDomainName: Origins.Items[0].DomainName}[?contains(OriginDomainName, '$BUCKET')] | [0] | Id" | tr -d '"')
+        distribution_id=$(aws cloudfront list-distributions --query "DistributionList.Items[].{Id:Id , OriginDomainName: Origins.Items[0].DomainName}[?contains(OriginDomainName, '${{ inputs.bucket }}')] | [0] | Id" | tr -d '"')
         echo "Distribution ID: $distribution_id"
         aws cloudfront create-invalidation --distribution-id $distribution_id --paths '/*'
 
