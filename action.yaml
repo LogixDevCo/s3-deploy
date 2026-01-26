@@ -135,10 +135,10 @@ runs:
       shell: bash
       run: |
         if [ "${{ inputs.run-ci }}" = "true" ]; then
-          npm ci
+          npm ci --legacy-peer-dep
         else
           rm package-lock.json
-          npm install
+          npm install --legacy-peer-dep
         fi
 
     - name: Start deployment
